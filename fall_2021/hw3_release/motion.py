@@ -48,7 +48,19 @@ def lucas_kanade(img1, img2, keypoints, window_size=5):
         y, x = int(round(y)), int(round(x))
 
         ### YOUR CODE HERE
-        pass
+        y_start = y - w if y - w > 0 else 0
+        x_start = x - w if x - w > 0 else 0
+        y_end = y_start + window_size if y_start + window_size < len(Iy) else len(Iy)
+        x_end = x_start + window_size if x_start + window_size < len(Iy[0]) else len(Iy[0])
+        Ixp = Ix[y_start:y_end, x_start:x_end].flatten()
+        Iyp = np.array(Iy[y_start:y_end, x_start:x_end]).flatten()
+        Itp = np.array(It[y_start:y_end, x_start:x_end]).flatten()
+        A = np.concatenate((Iyp[:, np.newaxis], Ixp[:, np.newaxis]), axis=1)
+        ATA = A.T @ A
+        Atb = -1 * (A.T @ Itp)
+        ATA_inv = np.linalg.inv(ATA) 
+        flow_vector = (ATA_inv @ Atb) 
+        flow_vectors.append(flow_vector)
         ### END YOUR CODE
 
     flow_vectors = np.array(flow_vectors)
@@ -92,7 +104,18 @@ def iterative_lucas_kanade(img1, img2, keypoints, window_size=9, num_iters=7, g=
 
         # TODO: Compute inverse of G at point (x1, y1)
         ### YOUR CODE HERE
-        pass
+        G = np.zeros((2,2))
+        for y_win in range(y1 - w, y1 + w + 1 , 1):
+            for x_win in range(x1 - w, x1 + w + 1 , 1):
+                top_left = np.square(Ix[y_win, x_win])
+                top_right = Ix[y_win, x_win] * Iy[y_win, x_win]
+                bot_left = Ix[y_win, x_win] * Iy[y_win, x_win]
+                bot_right = np.square(Iy[y_win, x_win])
+                G += np.array([
+                   [top_left, top_right],
+                   [bot_left, bot_right]
+                ])
+        G_inv = np.linalg.inv(G)
         ### END YOUR CODE
 
         # Iteratively update flow vector
@@ -104,7 +127,21 @@ def iterative_lucas_kanade(img1, img2, keypoints, window_size=9, num_iters=7, g=
 
             # TODO: Compute bk and vk = inv(G) x bk
             ### YOUR CODE HERE
-            pass
+            bk = np.zeros(2)
+            for y_win in range(y1 - w, y1 + w + 1 , 1):
+                for x_win in range(x1 - w, x1 + w + 1 , 1): 
+                    y_temp = int(round(y_win + gy + vy))
+                    x_temp = int(round(x_win + gx + vx))
+                    if y_temp > len(img2) or x_temp > len(img2[0]):
+                        continue
+                    del_k = img1[y_win, x_win] - img2[y_temp, x_temp] 
+                    val1 = del_k * Ix[y_win, x_win]
+                    val2 = del_k * Iy[y_win, x_win] 
+                    bk += np.array(
+                        [val1,
+                        val2]
+                    )
+            vk = G_inv @ bk
             ### END YOUR CODE
 
             # Update flow vector by vk
@@ -139,13 +176,18 @@ def pyramid_lucas_kanade(
     # Build image pyramids of img1 and img2
     pyramid1 = tuple(pyramid_gaussian(img1, max_layer=level, downscale=scale))
     pyramid2 = tuple(pyramid_gaussian(img2, max_layer=level, downscale=scale))
-
+    
     # Initialize pyramidal guess
     g = np.zeros(keypoints.shape)
 
     for L in range(level, -1, -1):
         ### YOUR CODE HERE
-        pass
+        p_L = keypoints / scale**L
+        d = iterative_lucas_kanade(pyramid1[L], pyramid2[L], p_L, window_size, num_iters, g)
+        if L == 0:
+            continue
+        else:
+            g = (g + d) * scale
         ### END YOUR CODE
 
     d = g + d
@@ -167,7 +209,9 @@ def compute_error(patch1, patch2):
     assert patch1.shape == patch2.shape, "Different patch shapes"
     error = 0
     ### YOUR CODE HERE
-    pass
+    patch1_norm = (patch1 - patch1.mean()) / patch1.std()
+    patch2_norm = (patch2 - patch2.mean()) / patch2.std()
+    error = np.square(patch1_norm - patch2_norm).mean()
     ### END YOUR CODE
     return error
 
@@ -258,7 +302,17 @@ def IoU(bbox1, bbox2):
     score = 0
 
     ### YOUR CODE HERE
-    pass
+    x1_right = x1 + w1
+    x2_right = x2 + w2
+    y1_bot = y1 + h1
+    y2_bot = y2 + h2 
+    x_dist = max(0, min(x1_right, x2_right) - max(x1, x2))
+    y_dist = max(0, min(y1_bot, y2_bot) - max(y1, y2))
+    intersection = x_dist * y_dist
+    x_area = (x1_right - x1) * (y1_bot - y1)
+    y_area = (x2_right - x2) * (y2_bot - y2)
+    union = (x_area + y_area) - intersection
+    score = intersection / union
     ### END YOUR CODE
 
     return score
