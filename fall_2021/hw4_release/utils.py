@@ -1,115 +1,148 @@
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib import animation
-from mpl_toolkits.mplot3d import Axes3D
-from scipy.linalg import expm, logm
+from scipy.ndimage import affine_transform
+
+# Functions to convert points to homogeneous coordinates and back
 
 
-def plot_frame(ax, T_local_from_global, label):
-    assert T_local_from_global.shape == (4, 4)
-
-    # Get rotation/translation of local origin wrt global frame
-    R = T_local_from_global[:3, :3].T
-    origin = -R @ T_local_from_global[:3, 3]
-
-    # Draw line for each basis
-    for direction, color in zip(R.T, "rgb"):
-        ax.quiver(*origin, *direction, color=color, length=0.3, arrow_length_ratio=0.05)
-
-    # Label
-    ax.text(origin[0] - 0.1, origin[1], origin[2] + 0.0, "↙" + label, color="black")
+def pad(x): return np.hstack([x, np.ones((x.shape[0], 1))])
 
 
-def plot_square(ax, vertices):
-    return ax.plot3D(vertices[0], vertices[1], vertices[2], "orange",)
+def unpad(x): return x[:, :-1]
 
 
-def configure_ax(ax):
-    ax.set_xlim(0, 2)
-    ax.set_ylim(0, 2)
-    ax.set_zlim(0, 2)
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.set_zticklabels([])
+def plot_matches(ax, image1, image2, keypoints1, keypoints2, matches,
+                 keypoints_color='k', matches_color=None, only_matches=False):
+    """Plot matched features.
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Matches and image are drawn in this ax.
+    image1 : (N, M [, 3]) array
+        First grayscale or color image.
+    image2 : (N, M [, 3]) array
+        Second grayscale or color image.
+    keypoints1 : (K1, 2) array
+        First keypoint coordinates as ``(row, col)``.
+    keypoints2 : (K2, 2) array
+        Second keypoint coordinates as ``(row, col)``.
+    matches : (Q, 2) array
+        Indices of corresponding matches in first and second set of
+        descriptors, where ``matches[:, 0]`` denote the indices in the first
+        and ``matches[:, 1]`` the indices in the second set of descriptors.
+    keypoints_color : matplotlib color, optional
+        Color for keypoint locations.
+    matches_color : matplotlib color, optional
+        Color for lines which connect keypoint matches. By default the
+        color is chosen randomly.
+    only_matches : bool, optional
+        Whether to only plot matches and not plot the keypoint locations.
+    """
 
-    ax.view_init(elev=20.0, azim=25)
+    image1.astype(np.float32)
+    image2.astype(np.float32)
 
+    new_shape1 = list(image1.shape)
+    new_shape2 = list(image2.shape)
 
-def animate_transformation(
-    filename, vertices_wrt_world, camera_from_world_transform, apply_transform,
-):
-    # Transformation parameters
-    d = 1.0
+    if image1.shape[0] < image2.shape[0]:
+        new_shape1[0] = image2.shape[0]
+    elif image1.shape[0] > image2.shape[0]:
+        new_shape2[0] = image1.shape[0]
 
-    # Animation parameters
-    start_pause = 20
-    end_pause = 20
+    if image1.shape[1] < image2.shape[1]:
+        new_shape1[1] = image2.shape[1]
+    elif image1.shape[1] > image2.shape[1]:
+        new_shape2[1] = image1.shape[1]
 
-    num_rotation_frames = 20
-    num_translation_frames = 20
+    if new_shape1 != image1.shape:
+        new_image1 = np.zeros(new_shape1, dtype=image1.dtype)
+        new_image1[:image1.shape[0], :image1.shape[1]] = image1
+        image1 = new_image1
 
-    # First set up the figure and axes
-    fig = plt.figure(figsize=(12, 8))
-    ax = plt.axes(projection="3d")
-    configure_ax(ax)
+    if new_shape2 != image2.shape:
+        new_image2 = np.zeros(new_shape2, dtype=image2.dtype)
+        new_image2[:image2.shape[0], :image2.shape[1]] = image2
+        image2 = new_image2
 
-    # Initial elements
-    T_camera_from_world = camera_from_world_transform(d)
-    plot_square(ax, vertices=vertices_wrt_world)
-    plot_frame(
-        ax, T_camera_from_world, label="Camera Frame",
-    )
-    plot_frame(
-        ax, np.eye(4), label="World Frame",
-    )
+    image = np.concatenate([image1, image2], axis=1)
 
-    # Animation function which updates figure data.  This is called sequentially
-    def animate(i):
-        print(".", end="")
-        if i < start_pause:
-            return (fig,)
-        elif i >= start_pause + num_rotation_frames + num_translation_frames:
-            return (fig,)
+    offset = image1.shape
+
+    if not only_matches:
+        ax.scatter(keypoints1[:, 1], keypoints1[:, 0],
+                   facecolors='none', edgecolors=keypoints_color)
+        ax.scatter(keypoints2[:, 1] + offset[1], keypoints2[:, 0],
+                   facecolors='none', edgecolors=keypoints_color)
+
+    ax.imshow(image, interpolation='nearest', cmap='gray')
+    ax.axis((0, 2 * offset[1], offset[0], 0))
+
+    for i in range(matches.shape[0]):
+        idx1 = matches[i, 0]
+        idx2 = matches[i, 1]
+
+        if matches_color is None:
+            color = np.random.rand(3)
         else:
-            i -= start_pause
+            color = matches_color
 
-        # Disclaimer: this is really inefficient!
-        ax.clear()
-        configure_ax(ax)
-        if i < num_rotation_frames:
-            R = expm(logm(T_camera_from_world[:3, :3]) * i / (num_rotation_frames - 1))
-            t = np.zeros(3)
-        else:
-            i -= num_rotation_frames
-            R = T_camera_from_world[:3, :3]
-            t = i / (num_translation_frames - 1) * T_camera_from_world[:3, 3]
+        ax.plot((keypoints1[idx1, 1], keypoints2[idx2, 1] + offset[1]),
+                (keypoints1[idx1, 0], keypoints2[idx2, 0]),
+                '-', color=color)
 
-        T_camera_from_world_interp = np.eye(4)
-        T_camera_from_world_interp[:3, :3] = R
-        T_camera_from_world_interp[:3, 3] = t
 
-        plot_square(
-            ax, vertices=apply_transform(T_camera_from_world_interp, vertices_wrt_world)
-        )
-        plot_frame(
-            ax,
-            T_camera_from_world @ np.linalg.inv(T_camera_from_world_interp),
-            label="Camera Frame",
-        )
-        plot_frame(
-            ax, np.linalg.inv(T_camera_from_world_interp), label="World Frame",
-        )
+def get_output_space(img_ref, imgs, transforms):
+    """
+    Args:
+        img_ref: reference image
+        imgs: images to be transformed
+        transforms: list of affine transformation matrices. transforms[i] maps
+            points in imgs[i] to the points in img_ref
+    Returns:
+        output_shape
+    """
 
-        return (fig,)
+    assert (len(imgs) == len(transforms))
 
-    # Call the animator.  blit=True means only re-draw the parts that have changed.
-    anim = animation.FuncAnimation(
-        fig,
-        animate,
-        frames=start_pause + num_rotation_frames + num_translation_frames + end_pause,
-        interval=100,
-        blit=True,
-    )
+    r, c = img_ref.shape
+    corners = np.array([[0, 0], [r, 0], [0, c], [r, c]])
+    all_corners = [corners]
 
-    anim.save(filename, writer="pillow")
-    plt.close()
+    for i in range(len(imgs)):
+        r, c = imgs[i].shape
+        H = transforms[i]
+        corners = np.array([[0, 0], [r, 0], [0, c], [r, c]])
+        warped_corners = corners.dot(H[:2, :2]) + H[2, :2]
+        all_corners.append(warped_corners)
+
+    # Find the extents of both the reference image and the warped
+    # target image
+    all_corners = np.vstack(all_corners)
+
+    # The overall output shape will be max - min
+    corner_min = np.min(all_corners, axis=0)
+    corner_max = np.max(all_corners, axis=0)
+    output_shape = (corner_max - corner_min)
+
+    # Ensure integer shape with np.ceil and dtype conversion
+    output_shape = np.ceil(output_shape).astype(int)
+    offset = corner_min
+
+    return output_shape, offset
+
+
+def warp_image(img, H, output_shape, offset):
+
+    # Note about affine_transfomr function:
+    # Given an output image pixel index vector o,
+    # the pixel value is determined from the input image at position
+    # np.dot(matrix,o) + offset.
+    Hinv = np.linalg.inv(H)
+    m = Hinv.T[:2, :2]
+    b = Hinv.T[:2, 2]
+    img_warped = affine_transform(img.astype(np.float32),
+                                  m, b+offset,
+                                  output_shape,
+                                  cval=-1)
+
+    return img_warped
