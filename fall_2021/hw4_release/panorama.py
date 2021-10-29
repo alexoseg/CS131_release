@@ -53,7 +53,35 @@ def harris_corners(img, window_size=3, k=0.04):
     dy = filters.sobel_h(img)
 
     ### YOUR CODE HERE
-    pass
+    
+    # 2. Compute product of derivatives
+    dx_2 = np.square(dx)
+    dy_2 = np.square(dy)
+    dx_dy = dx * dy
+    
+    Hk, Wk = window.shape
+    pad_height = Hk // 2
+    pad_width = Wk // 2
+    
+    dx2_pad = np.pad(dx_2, ((pad_height, pad_height), (pad_width, pad_width)))
+    dy2_pad = np.pad(dy_2, ((pad_height, pad_height), (pad_width, pad_width)))
+    dxdy_pad = np.pad(dx_dy, ((pad_height, pad_height), (pad_width, pad_width)))
+    for m in range(H): 
+        for n in range(W): 
+            # 3. Compute Matrix M at each pixel
+            dx2_window = dx2_pad[m:m+Hk, n:n+Wk]
+            dy2_window = dy2_pad[m:m+Hk, n:n+Wk]
+            dxdy_window = dxdy_pad[m:m+Hk, n:n+Wk]
+            M = np.array([
+                [np.sum(window * dx2_window), np.sum(window * dxdy_window)], 
+                [np.sum(window * dxdy_window), np.sum(window * dy2_window)]
+            ])
+            
+            # 4. Compute the corner response
+            R = np.linalg.det(M) -  k * np.square(np.trace(M))
+            
+            # 5. Output corner response map
+            response[m, n] = R
     ### END YOUR CODE
 
     return response
@@ -79,7 +107,12 @@ def simple_descriptor(patch):
     """
     feature = []
     ### YOUR CODE HERE
-    pass
+    norm_patch = (patch - np.mean(patch)) 
+    sig = np.std(patch)
+    sig = 1 if sig == 0 else sig
+    norm_patch /= sig
+    
+    feature = norm_patch.flatten()
     ### END YOUR CODE
     return feature
 
@@ -134,7 +167,15 @@ def match_descriptors(desc1, desc2, threshold=0.5):
     dists = cdist(desc1, desc2)
 
     ### YOUR CODE HERE
-    pass
+    smallest_dists_idx = np.argmin(dists, axis = 1)
+    smallest_dists = dists[np.arange(len(dists)), smallest_dists_idx]
+    second_smallest = np.sort(dists, axis = 1)[:, 1]
+    ratios = smallest_dists/second_smallest
+    for i in range(len(ratios)): 
+        if ratios[i] >= threshold: 
+            continue
+        matches.append([i, smallest_dists_idx[i]])
+    matches = np.asarray(matches)
     ### END YOUR CODE
 
     return matches
@@ -167,7 +208,7 @@ def fit_affine_matrix(p1, p2):
     p2 = pad(p2)
 
     ### YOUR CODE HERE
-    pass
+    H, _, _, _ = np.linalg.lstsq(p2, p1, rcond=None)
     ### END YOUR CODE
 
     # Sometimes numerical issues cause least-squares to produce the last
@@ -223,7 +264,7 @@ def ransac(keypoints1, keypoints2, matches, n_iters=200, threshold=20):
 
     max_inliers = np.zeros(N, dtype=bool)
     n_inliers = 0
-
+    
     # RANSAC iteration start
 
     # Note: while there're many ways to do random sampling, we use
@@ -236,9 +277,26 @@ def ransac(keypoints1, keypoints2, matches, n_iters=200, threshold=20):
         samples = matches[:n_samples]
         sample1 = pad(keypoints1[samples[:,0]])
         sample2 = pad(keypoints2[samples[:,1]])
-    
+        
     ### YOUR CODE HERE
-    pass
+        # 2. Compute Affine Transformation Matrix
+        H_loop, _, _, _ = np.linalg.lstsq(sample2, sample1, rcond=None)
+        
+        # 3. Compute inliers via Euclidean Distance
+        predicted_p1 = matched2 @ H_loop
+        distances = np.sqrt(np.sum(np.square(predicted_p1 - matched1), axis = 1))
+        inlier_bool = distances < threshold
+        
+        # 4. Keep the largest set of inliers (use >, i.e. break ties by whichever set is seen first)
+        if np.sum(inlier_bool) > n_inliers: 
+            n_inliers = np.sum(inlier_bool)
+            max_inliers = inlier_bool
+            
+    # 5. Re-compute least-squares estimate on all of the inliers
+    new_sample1 = matched1[max_inliers]
+    new_sample2 = matched2[max_inliers]
+
+    H, _, _, _ = np.linalg.lstsq(new_sample2, new_sample1, rcond=None)
     ### END YOUR CODE
     return H, orig_matches[max_inliers]
 
@@ -288,7 +346,18 @@ def hog_descriptor(patch, pixels_per_cell=(8,8)):
 
     # Compute histogram per cell
     ### YOUR CODE HERE
-    pass
+    for row in range(rows): 
+        for col in range(cols): 
+            G_cell = G_cells[row][col]
+            theta = theta_cells[row][col]
+            for r in range(len(G_cell)): 
+                for c in range(len(G_cell[0])): 
+                    direction = int(theta[r][c])
+                    bucket = min(8, direction // degrees_per_bin)
+                    hists[row, col, bucket] += G_cell[r, c] 
+             
+    flatten_hist = hists.flatten()
+    block = flatten_hist / np.linalg.norm(flatten_hist)
     ### YOUR CODE HERE
 
     return block
